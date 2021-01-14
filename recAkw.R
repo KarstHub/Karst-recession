@@ -5,7 +5,7 @@
 
 ##-------------------------------------------------------------------------------------------------------------------------------------------
 recAkw <- function(DATA, CoV, len, plot){
-  #DATA = hydrogr; CoV = 0.10; len = 10; plot = T
+  #DATA = hydrogr; CoV = 0.01; len = 10; plot = T
   if(len<5){
     stop("Specified recession days less than 5")
   }
@@ -21,7 +21,7 @@ recAkw <- function(DATA, CoV, len, plot){
   RP <- setNames(data.frame(matrix(ncol = 4, nrow = nrow(x))), c("Date", "Q", "Qc", "Qm"))  #dataframe with conduit and matrix segement separated
   RPlist <- list(RP)  #list of all RP segments
   a = 0
-  b = 0
+  n = 0
   
   # select all recession segments
   for(i in 1:nrow(x)){
@@ -62,15 +62,15 @@ recAkw <- function(DATA, CoV, len, plot){
   # Activate the following lines to apply moving average 
   # to smooth timeseries before recession extraction
   #-----------------------------------------------------------
-  # sort time series data, smoothing with moving day average
-  # x = hydrogr; MA = 5; dQ = 0.3; lambda = 0.3; len = 30; plot = T
+  #sort time series data, smoothing with moving day average
+  # x = hydrogr; MA = 3; dQ = 0.3; lambda = 0.3; len = 30; plot = T
   # x$Date <- x[,1]
   # x$Q <- x[,2]
-  # x$Qma <- filter(x[,2], rep(1/MA, MA), sides = 2, circular = F)
+  # x$Qma <- filter(x[,2], rep(1/MA, MA), sides = 2, circular = T)
   # 
-  # for(i in 1:nrow(x)){
+  # for(i in 1:(nrow(x)-1)){
   # 
-  #   if(isTRUE(x$Qma[i] >= x$Qma[i+1]*0.985)){ # select values with decreasing moving average
+  #   if(isTRUE(x$Qma[i] >= x$Qma[i+1]*1)){ # select values with decreasing moving average
   #     recSeg$Date[i] <- format(x[i, 1], format = "%Y-%m-%d")
   #     recSeg$Q[i] <- x$Q[i]
   #     #RP$Date[i] <- format(x$Date[i], format = "%Y-%m-%d")
@@ -87,34 +87,65 @@ recAkw <- function(DATA, CoV, len, plot){
   # }
   #---------------------------------------------------------
   
+  coefvar <- function(x,y,D){
+    N <- nrow(D)
+    Q0 <- as.numeric(D[1,2])
+    Q <- with(data=D, Q0*(1 + (1-y)*Q0^(1-y)/(x*y)*Index)^(1/(y-1)))
+    coef <- (N^2/(N-1) * sum((D[,2]-Q)^2) / (sum(D[,2]))^2)^0.5
+  }
+  
+  # fcal <- function(data, par){
+  #   Q0 = Q0; #b = b
+  #   alp <- par[1] #baseflow
+  #   #b <- par[2]
+  #   Qs <- with(data, Q0*(1 + ((1-b)*Q0^(1-b)/(alp*b))*Index)^(1/(b-1))) 
+  #   rss <- with(data, lsfit(x = Q, y = Qs))$coefficients[2]
+  #   #rss <- with(data, sum((Q - Qs)^2))
+  #   return(rss)
+  # }
+  
+  
   # separate segments to quick and slow flow components
   for(j in 1:length(segList)){
     #j=414
-    N <- nrow(segList[[j]])
+    Nr <- nrow(segList[[j]])
+    b <- 1
     
-    if(N>5){
+    if(Nr>5){
       R <- segList[[j]]
       
       for(k in 1:nrow(R)){
-        rp <- R[k:N,]
+        rp <- R[k:Nr,]
+        N <- nrow(rp)
+        CV <- 10
         
-        if(nrow(rp)<5){
+        if(N<5){
           break
         }
         
-        rp$Index <- seq_along(rp$Date)-1
+        # rp$Index <- seq_along(rp$Date)-1
+        rp$Index <- seq(0, N-1, 1)
         Q0 <- as.numeric(rp[1,2])
-        z <- summary(nls(Q ~ Q0*exp(-alpha*Index), data = rp, start = list(alpha=0.01)))
-        alpha <- coef(z)["alpha","Estimate"]
-        bflow <- with(rp, Q0*exp(-alpha*Index))
-        CV <- sqrt((N^2 * sum((rp[,2]-bflow)^2)) / ((N-1) * (sum(rp[,2]))^2))
+        a <- sum(rp[1:(N-1),2] + rp[2:N,2])/(2*sum(rp[1:(N-1),2]^b - rp[2:N,2]^b))
+        CV <- coefvar(x=a, y=b, D=rp)
+        
+        # z <- summary(nls(Q ~ Q0*exp(-alpha*Index), data = rp, start = list(alpha=0.001)))
+        # alpha <- coef(z)["alpha","Estimate"]
+        # f_opt = optim(par = c(0.1,0.9), fn = fcal, data = rp, method = "BFGS", 
+        #               control = c(trace = T, maxit = 30000))
+        # alp = f_opt$par[1]
+        # b = f_opt$par[2]
+        # bflow <- with(rp, Q0*exp(-alpha*Index))
+        # bflow <- with(rp, Q0*(1 + ((1-b)*Q0^(1-b)/(alp*b))*Index)^(1/(b-1)))
+        # CV <- sqrt((N^2 * sum((rp[,2]-bflow)^2)) / ((N-1) * (sum(rp[,2]))^2))
+        # 
         
         # select segment when CV <= CoV and break loop
-        if(CV <= CoV && nrow(rp) >= 5){
-          RP <- setNames(data.frame(matrix(ncol = 5, nrow = N)), c("Date", "Q", "Qc", "Qm", "Vt"))
+        if(CV <= CoV && N >= 5){
+          RP <- setNames(data.frame(matrix(ncol = 5, nrow = Nr)), c("Date", "Q", "Qc", "Qm", "Vt"))
           RP$Date <- R$Date
           RP$Q <- R$Q
-          RP$Qm[k:N] <- R$Q[k:N]
+          RP$Qm[k:Nr] <- R$Q[k:Nr]
           RP$Qc[1:k] <- R$Q[1:k]
           RP$Vt <- R$Vt
           
@@ -126,9 +157,11 @@ recAkw <- function(DATA, CoV, len, plot){
           RP$Date <- as.Date(RP$Date)
           
           # append segment to list of recessions
-          b <- b+1
-          RPlist[[b]] <- RP
+          n <- n+1
+          RPlist[[n]] <- RP
           break
+        }else{
+          next
         }
       }
       
